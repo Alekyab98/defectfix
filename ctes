@@ -1,0 +1,133 @@
+WITH
+  null_agg AS(
+  SELECT
+    trans_dt,
+    event_time,
+    fqdn,
+    vendor,
+    MAX(TO_JSON_STRING(labels)) AS labels,
+    SAFE_CAST( SUM(
+        CASE
+          WHEN metric_name='cre_bearer_att' AND JSON_VALUE(labels,'$.group')='pgw_dedi_bearer_mgmt_apn' THEN CAST(metric_increase_value AS float64)
+          ELSE NULL
+      END
+        ) - SUM(
+        CASE
+          WHEN metric_name='cre_bearer_cmpl' AND JSON_VALUE(labels, '$.group')='pgw_dedi_bearer_mgmt_apn' THEN CAST(metric_increase_value AS float64)
+          ELSE NULL
+      END
+        ) - SUM(
+        CASE
+          WHEN metric_name='create_bearer_response' AND JSON_VALUE(labels, '$.group')='cause_code' AND JSON_VALUE(labels, '$.cause_code_stats') != '16-request-accepted' THEN CAST(metric_increase_value AS float64)
+          ELSE NULL
+      END
+        ) AS float64) AS create_bearer_failre_response_timeout1,
+  FROM
+    vz-it-pr-gudv-dtwndo-0.aid_nwperf_aether_core_tbls_v.aether_smf_performance
+  WHERE
+    trans_dt = '2024-12-04'
+    AND fqdn = 'chrxnclhvzwcsmf-y-ec-consp-001'
+    AND event_time = '2024-12-04 00:00:00 UTC'
+  GROUP BY
+    trans_dt,
+    event_time,
+    vendor,
+    fqdn ),
+
+  not_null_agg AS(
+  SELECT
+    trans_dt,
+    event_time,
+    fqdn,
+    vendor,
+    TO_JSON_STRING(labels) AS labels,
+    SAFE_CAST(SUM(
+        CASE
+          WHEN metric_name='active_sessions' AND JSON_VALUE(labels,'$.group')='apn_pgw_upf_stats' THEN CAST(metric_sum_value AS FLOAT64)
+          ELSE NULL
+      END
+        ) AS FLOAT64) AS active_sessions,
+  FROM
+    vz-it-pr-gudv-dtwndo-0.aid_nwperf_aether_core_tbls_v.aether_smf_performance
+  WHERE
+    trans_dt = '2024-12-04'
+    AND fqdn = 'chrxnclhvzwcsmf-y-ec-consp-001'
+    AND event_time = '2024-12-04 00:00:00 UTC'
+  GROUP BY
+    trans_dt,
+    event_time,
+    vendor,
+    fqdn,
+    labels ),
+
+  null_unnset AS (
+  SELECT
+    trans_dt,
+    event_time,
+    vendor,
+    fqdn,
+    metric.metric_name AS metric_name,
+    SUM(metric.metric_value) AS value,
+    metric.group_by_label AS key_group
+  FROM
+    null_agg,
+    UNNEST ([ STRUCT('create_bearer_failre_response_timeout1' AS metric_name,
+        null_agg.create_bearer_failre_response_timeout1 AS metric_value,
+        NULL AS group_by_label) ]) AS metric
+  GROUP BY
+    trans_dt,
+    event_time,
+    vendor,
+    fqdn,
+    metric_name,
+    --  value,
+    key_group ),
+  not_null_unnset AS (
+  SELECT
+    trans_dt,
+    event_time,
+    vendor,
+    fqdn,
+    metric.metric_name AS metric_name,
+    SUM(metric.metric_value) AS value,
+    metric.group_by_label AS key_group
+  FROM
+    not_null_agg,
+    UNNEST ([ STRUCT('active_sessions' AS metric_name,
+        not_null_agg.active_sessions AS metric_value,
+        TO_JSON_STRING(STRUCT('apn' AS group_by_key_name,
+            JSON_VALUE(labels,'$.apn') AS group_by_key_value)) AS group_by_label) ]) AS metric
+  GROUP BY
+    trans_dt,
+    event_time,
+    vendor,
+    fqdn,
+    metric_name,
+    --  value,
+    key_group )
+SELECT
+  *
+FROM (
+  SELECT
+    trans_dt,
+    event_time,
+    vendor,
+    fqdn,
+    metric_name,
+    value,
+    SAFE_CAST(key_group AS STRING) AS key_group
+  FROM
+    null_unnset 
+    WHERE value IS NOT NULL)
+UNION ALL (
+  SELECT
+    trans_dt,
+    event_time,
+    vendor,
+    fqdn,
+    metric_name,
+    value,
+    key_group
+  FROM
+    not_null_unnset 
+    WHERE value IS NOT NULL)
