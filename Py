@@ -1,0 +1,54 @@
+import re
+
+def parse_unnest_blocks(sql_query):
+    # Regex to match the UNNEST blocks and their associated expressions
+    unnest_pattern = r"UNNEST\s*\(\[\s*STRUCT\((.*?)\]\)\s*AS\s*metric"
+    unnest_blocks = re.findall(unnest_pattern, sql_query, re.DOTALL)
+
+    null_cte = []
+    not_null_cte = []
+
+    for block in unnest_blocks:
+        # Check if the `group_by_label` is NULL or has a value
+        if "NULL AS group_by_label" in block:
+            null_cte.append(block.strip())
+        else:
+            not_null_cte.append(block.strip())
+
+    return null_cte, not_null_cte
+
+def generate_ctes(null_cte_blocks, not_null_cte_blocks):
+    null_cte = []
+    not_null_cte = []
+
+    # Generate CTEs for null group
+    for block in null_cte_blocks:
+        null_cte.append(f"UNNEST ([STRUCT({block})]) AS metric")
+
+    # Generate CTEs for not-null group
+    for block in not_null_cte_blocks:
+        not_null_cte.append(f"UNNEST ([STRUCT({block})]) AS metric")
+
+    return null_cte, not_null_cte
+
+def main():
+    # Input SQL query
+    sql_query = """[PASTE YOUR SQL QUERY HERE]"""
+
+    # Parse the UNNEST blocks
+    null_cte_blocks, not_null_cte_blocks = parse_unnest_blocks(sql_query)
+
+    # Generate CTEs
+    null_cte, not_null_cte = generate_ctes(null_cte_blocks, not_null_cte_blocks)
+
+    # Output the CTEs
+    print("Null Group CTE:")
+    for line in null_cte:
+        print(line)
+
+    print("\nNot Null Group CTE:")
+    for line in not_null_cte:
+        print(line)
+
+if __name__ == "__main__":
+    main()
