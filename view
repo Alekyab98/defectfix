@@ -1,0 +1,1100 @@
+WITH agg AS
+(
+         SELECT   trans_dt,
+                  event_time,
+                  fqdn,
+                  vendor,
+                  (labels) AS labels,
+                  safe_cast(Sum(
+                  CASE
+                           WHEN metric_name='active_sessions'
+                           AND      Json_value(labels,'$.group')='apn_pgw_upf_stats' THEN Cast(metric_sum_value AS FLOAT64)
+                           ELSE NULL
+                  END ) as float64) AS active_sessions,
+                  safe_cast( sum(
+                  CASE
+                           WHEN metric_name='sm_nbr_of_bearers'
+                                    -- AND JSON_VALUE(labels,'$.qci_stats')IN ('1', '5', '8', '9', '132')
+                           AND      json_value(labels,'$.group')='pgw_number_of_bearers_qci_arp' THEN cast(metric_sum_value AS float64)
+                           ELSE NULL
+                  END ) AS float64) AS qci_session_count,
+                  -- SAFE_CAST( SUM(
+                  --   CASE
+                  --     WHEN metric_name='sm_nbr_of_bearers' AND JSON_VALUE(labels,'$.qci_stats')IN ('1', '5', '8', '9', '132') AND JSON_VALUE(labels,'$.group')='pgw_number_of_bearers_qci_arp' THEN CAST(metric_sum_value AS FLOAT64)
+                  --     ELSE NULL END
+                  -- ) AS FLOAT64) AS qci_session_count_snapshot,
+                  safe_cast( sum(
+                  CASE
+                           WHEN metric_name='nbr_of_pgw_pdn_connections'
+                           AND      json_value(labels, '$.group')='pdn_connections_pgw' THEN cast(metric_sum_value AS float64)
+                           ELSE NULL
+                  END ) - sum(
+                  CASE
+                           WHEN metric_name='nbr_of_wlan_pdn_connections'
+                           AND      json_value(labels, '$.group')='pdn_connections_pgw' THEN cast(metric_sum_value AS float64)
+                           ELSE NULL
+                  END ) AS float64 ) AS rat_session_count_lte,
+                  safe_cast( sum(
+                  CASE
+                           WHEN metric_name='nbr_of_wlan_pdn_connections'
+                           AND      json_value(labels,'$.group')='pdn_connections_pgw' THEN cast(metric_sum_value AS float64)
+                           ELSE NULL
+                  END ) AS float64) AS rat_session_count_wlan,
+                  safe_cast( sum(
+                  CASE
+                           WHEN metric_name='pdu_session'
+                           AND      json_value(labels,'$.group')='number_of_pdu_sessions' THEN cast(metric_sum_value AS float64)
+                           ELSE NULL
+                  END ) AS float64) AS rat_session_count_nr,
+                  safe_cast( sum(
+                  CASE
+                           WHEN metric_name='heartbeat_req'
+                           AND      json_value(labels,'$.group')='smf_nnrf_nfm' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64) AS nfheartbeat_failure_rate_request,
+                  round( safe_cast(( 1 - safe_divide ( sum(
+                  CASE
+                           WHEN metric_name='heartbeat_resp_succ'
+                           AND      json_value(labels,'$.group')='smf_nnrf_nfm' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ), sum(
+                  CASE
+                           WHEN metric_name='heartbeat_req'
+                           AND      json_value(labels,'$.group')='smf_nnrf_nfm' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) ))*100 AS float64 ),4 ) AS nfheartbeat_failure_rate,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='nnrf_nfm_heartbeat_resp'
+                           AND      json_value(labels,'$.group')='smf_sbi_response_cause'
+                           AND      json_value(labels,'$.cause') NOT LIKE '2%' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS nfheartbeat_failure_response_codes_cause,
+                  round( safe_cast((1 - safe_divide ( sum(
+                  CASE
+                           WHEN metric_name='cre_bearer_cmpl'
+                           AND      json_value(labels,'$.group')='pgw_bearer_mgmt_apn' THEN ifnull(cast(metric_increase_value AS float64), 0)
+                           ELSE NULL
+                  END ), sum(
+                  CASE
+                           WHEN metric_name='cre_bearer_att'
+                           AND      json_value(labels,'$.group')='pgw_bearer_mgmt_apn' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) ) ) *100 AS float64 ),4) AS create_session_failure_rate_create_bearer_failure_rate,
+                  round(safe_cast( sum(
+                  CASE
+                           WHEN metric_name='cre_bearer_att'
+                           AND      json_value(labels,'$.group')='pgw_bearer_mgmt_apn' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS create_session_failure_rate_requests,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='create_session_response'
+                           AND      json_value(labels, '$.group')='cause_code'
+                           AND      json_value(labels, '$.cause_code_stats') != '16-request-accepted' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS create_session_failure_response_cause_code_stats,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='cre_bearer_att'
+                           AND      json_value(labels,'$.group')='pgw_bearer_mgmt_apn' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) - sum(
+                  CASE
+                           WHEN metric_name='cre_bearer_cmpl'
+                           AND      json_value(labels, '$.group')='pgw_bearer_mgmt_apn' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) - sum(
+                  CASE
+                           WHEN metric_name='create_session_response'
+                           AND      json_value(labels, '$.group')='cause_code'
+                           AND      json_value(labels, '$.cause_code_stats') != '16-request-accepted' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64 ),4) AS create_session_failure_response_codes_timeout1,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='pgw_gtpv2_create_session_request'
+                           AND      json_value(labels, '$.group')='pgw_gtpv2_stats' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) - sum(
+                  CASE
+                           WHEN metric_name='pgw_gtpv2_create_session_response'
+                           AND      json_value(labels, '$.group')='pgw_gtpv2_stats' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) - sum(
+                  CASE
+                           WHEN metric_name='create_session_response'
+                           AND      json_value(labels, '$.group')='cause_code'
+                           AND      json_value(labels, '$.cause_code_stats') != '16-request-accepted' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64 ),4) AS create_session_failure_response_codes_timeout,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='cre_bearer_att'
+                           AND      json_value(labels,'$.group')='pgw_dedi_bearer_mgmt_apn' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS create_bearer_failure_rate_request,
+                  round( safe_cast( (1 - safe_divide ( sum(
+                  CASE
+                           WHEN metric_name='cre_bearer_cmpl'
+                           AND      json_value(labels,'$.group')='pgw_dedi_bearer_mgmt_apn' THEN ifnull(cast(metric_increase_value AS float64), 0)
+                           ELSE NULL
+                  END ), sum(
+                  CASE
+                           WHEN metric_name='cre_bearer_att'
+                           AND      json_value(labels,'$.group')='pgw_dedi_bearer_mgmt_apn' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) ))*100 AS float64 ),4) AS create_bearer_failure_rate,
+                  ------ name to be decided
+                  round( safe_cast( (1 - safe_divide ( sum(
+                  CASE
+                           WHEN metric_name='pgw_gtpv2_create_session_response'
+                           AND      json_value(labels,'$.group')='pgw_gtpv2_stats' THEN ifnull(cast(metric_increase_value AS float64), 0)
+                           ELSE NULL
+                  END ), sum(
+                  CASE
+                           WHEN metric_name='pgw_gtpv2_create_session_request'
+                           AND      json_value(labels,'$.group')='pgw_gtpv2_stats' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) ))*100 AS float64 ),4) AS create_bearer_failure_rate_create_session_failure_rate,
+                  ------ name to be decided
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='pgw_gtpv2_create_session_request'
+                           AND      json_value(labels, '$.group')='pgw_gtpv2_stats' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) - sum(
+                  CASE
+                           WHEN metric_name='pgw_gtpv2_create_session_response'
+                           AND      json_value(labels, '$.group')='pgw_gtpv2_stats' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) - sum(
+                  CASE
+                           WHEN metric_name='create_session_response'
+                           AND      json_value(labels, '$.group')='cause_code'
+                           AND      json_value(labels, '$.cause_code_stats') != '16-request-accepted' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS create_bearer_failure_response_codes_timesout,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='create_bearer_response'
+                           AND      json_value(labels, '$.group')='cause_code'
+                           AND      json_value(labels, '$.cause_code_stats') != '16-request-accepted' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS create_bearer_failure_response_cause_code_stats,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='cre_bearer_att'
+                           AND      json_value(labels,'$.group')='pgw_dedi_bearer_mgmt_apn' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) - sum(
+                  CASE
+                           WHEN metric_name='cre_bearer_cmpl'
+                           AND      json_value(labels, '$.group')='pgw_dedi_bearer_mgmt_apn' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) - sum(
+                  CASE
+                           WHEN metric_name='create_bearer_response'
+                           AND      json_value(labels, '$.group')='cause_code'
+                           AND      json_value(labels, '$.cause_code_stats') != '16-request-accepted' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS create_bearer_failre_response_timeout1,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='udm_sdm_disc_req'
+                           AND      json_value(labels,'$.group')='smf_nnrf_disc' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS nfdiscover_udm_sdm_failure_rate_request,
+                  ---------name to be decided
+                  round( safe_cast(( 1 - safe_divide( sum(
+                  CASE
+                           WHEN metric_name='udm_sdm_disc_resp_succ'
+                           AND      json_value(labels,'$.group')='smf_nnrf_disc' THEN ifnull(cast(metric_increase_value AS float64), 0)
+                           ELSE NULL
+                  END ), sum(
+                  CASE
+                           WHEN metric_name='udm_sdm_disc_req'
+                           AND      json_value(labels,'$.group')='smf_nnrf_disc' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END )) )*100 AS float64 ),4) AS nfdiscover_udm_sdm_failure_rate,
+                  --------- name to be decided
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='nnrf_disc_udm_sdm_disc_resp'
+                           AND      json_value(labels,'$.group')='smf_sbi_response_cause'
+                           AND      json_value(labels,'$.cause') NOT LIKE '2%' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS nrfdiscovery_udm_failure_response_codes_cause,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='udm_sdm_disc_req'
+                           AND      json_value(labels, '$.group')='smf_nnrf_disc' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) - sum(
+                  CASE
+                           WHEN metric_name='udm_sdm_disc_resp_succ'
+                           AND      json_value(labels, '$.group')='smf_nnrf_disc' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) - sum(
+                  CASE
+                           WHEN metric_name='nnrf_disc_udm_sdm_disc_resp'
+                           AND      json_value(labels, '$.group')='smf_sbi_response_cause'
+                           AND      json_value(labels, '$.cause') NOT LIKE '2%' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS nrfdiscovery_udm_failure_response_codes_timeouts,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='get_req'
+                           AND      json_value(labels,'$.group')='smf_nudm_sdm' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS nudm_sdm_get_failure_rate_request,
+                  round( safe_cast(( 1 - safe_divide( sum(
+                  CASE
+                           WHEN metric_name='get_resp_succ'
+                           AND      json_value(labels,'$.group')='smf_nudm_sdm' THEN ifnull(cast(metric_increase_value AS float64), 0)
+                           ELSE NULL
+                  END ), sum(
+                  CASE
+                           WHEN metric_name='get_req'
+                           AND      json_value(labels,'$.group')='smf_nudm_sdm' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) ))*100 AS float64 ),4) AS nudm_sdm_get_failure_rate,
+                  ---------name to be decided
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='sdm_get_resp'
+                           AND      json_value(labels,'$.group')='smf_sbi_response_cause'
+                           AND      json_value(labels,'$.cause') NOT LIKE '2%' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS nudm_sdm_get_failure_response_codes_cause,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='get_req'
+                           AND      json_value(labels, '$.group')='smf_nudm_sdm' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) - sum(
+                  CASE
+                           WHEN metric_name='get_resp_succ'
+                           AND      json_value(labels, '$.group')='smf_nudm_sdm' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) - sum(
+                  CASE
+                           WHEN metric_name='sdm_get_resp'
+                           AND      json_value(labels, '$.group')='smf_sbi_response_cause'
+                           AND      json_value(labels, '$.cause') NOT LIKE '2%' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS nudm_sdm_get_failure_response_codes_timeouts,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='pcf_smpc_disc_req'
+                           AND      json_value(labels,'$.group')='smf_nnrf_disc' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS nfdiscover_sm_pcf_failure_rate_request,
+                  round( safe_cast( (1 - safe_divide( sum(
+                  CASE
+                           WHEN metric_name='pcf_smpc_disc_resp_succ'
+                           AND      json_value(labels,'$.group')='smf_nnrf_disc' THEN ifnull(cast(metric_increase_value AS float64), 0)
+                           ELSE NULL
+                  END ), sum(
+                  CASE
+                           WHEN metric_name='pcf_smpc_disc_req'
+                           AND      json_value(labels,'$.group')='smf_nnrf_disc' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) ))*100 AS float64 ),4) AS nfdiscover_sm_pcf_failure_rate,
+                  ----- name to be decided
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='nnrf_disc_pcf_smpc_disc_resp'
+                           AND      json_value(labels,'$.group')='smf_sbi_response_cause'
+                           AND      json_value(labels,'$.cause') NOT LIKE '2%' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS nfdiscover_sm_pcf_failure_rate_cause,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='pcf_smpc_disc_req'
+                           AND      json_value(labels, '$.group')='smf_nnrf_disc' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) - sum(
+                  CASE
+                           WHEN metric_name='pcf_smpc_disc_resp_succ'
+                           AND      json_value(labels, '$.group')='smf_nnrf_disc' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) - sum(
+                  CASE
+                           WHEN metric_name='nnrf_disc_pcf_smpc_disc_resp'
+                           AND      json_value(labels, '$.group')='smf_sbi_response_cause'
+                           AND      json_value(labels, '$.cause') NOT LIKE '2%' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS nfdiscover_sm_pcf_failure_rate_timeouts,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='create_req'
+                           AND      json_value(labels,'$.group')='smf_npcf_sm_plcy_ctrl_snssai_apn' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS npcf_smpolicycontrol_create_failure_rate_apn,
+                  round( safe_cast(( 1 - safe_divide ( sum(
+                  CASE
+                           WHEN metric_name='create_resp_succ'
+                           AND      json_value(labels,'$.group')='smf_npcf_sm_plcy_ctrl_snssai_apn' THEN ifnull(cast(metric_increase_value AS float64), 0)
+                           ELSE NULL
+                  END ), sum(
+                  CASE
+                           WHEN metric_name='create_req'
+                           AND      json_value(labels,'$.group')='smf_npcf_sm_plcy_ctrl_snssai_apn' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) ) )*100 AS float64 ),4) AS npcf_smpolicycontrol_create_failure_rate,
+                  ------------ name check
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='sm_plcy_ctrl_create_resp'
+                           AND      json_value(labels,'$.group')='smf_sbi_response_cause'
+                           AND      json_value(labels,'$.cause') NOT LIKE '2%' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS npcf_smpolicycontrol_create_failure_response_codes_cause,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='create_req'
+                           AND      json_value(labels, '$.group')='smf_npcf_sm_plcy_ctrl_snssai_apn' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) - sum(
+                  CASE
+                           WHEN metric_name='create_resp_succ'
+                           AND      json_value(labels, '$.group')='smf_npcf_sm_plcy_ctrl_snssai_apn' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) - sum(
+                  CASE
+                           WHEN metric_name='sm_plcy_ctrl_create_resp'
+                           AND      json_value(labels, '$.group')='smf_sbi_response_cause'
+                           AND      json_value(labels, '$.cause') NOT LIKE '2%' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS npcf_smpolicycontrol_create_failure_response_codes_timeouts,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='update_req'
+                           AND      json_value(labels,'$.group')='smf_npcf_sm_plcy_ctrl_snssai_apn' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS npcf_smpolicycontrol_update_failure_rate_apn,
+                  round( safe_cast( ( 1 - safe_divide (sum(
+                  CASE
+                           WHEN metric_name='update_resp_succ'
+                           AND      json_value(labels,'$.group')='smf_npcf_sm_plcy_ctrl_snssai_apn' THEN ifnull(cast(metric_increase_value AS float64), 0)
+                           ELSE NULL
+                  END ), sum(
+                  CASE
+                           WHEN metric_name='update_req'
+                           AND      json_value(labels,'$.group')='smf_npcf_sm_plcy_ctrl_snssai_apn' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) ))*100 AS float64 ),4) AS npcf_smpolicycontrol_update_failure_rate,
+                  ---------- name check
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='sm_plcy_ctrl_update_resp'
+                           AND      json_value(labels,'$.group')='smf_sbi_response_cause'
+                           AND      json_value(labels,'$.cause') NOT LIKE '2%' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS npcf_smpolicycontrol_update_failure_response_code_cause,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='update_req'
+                           AND      json_value(labels, '$.group')='smf_npcf_sm_plcy_ctrl_snssai_apn' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) - sum(
+                  CASE
+                           WHEN metric_name='update_resp_succ'
+                           AND      json_value(labels, '$.group')='smf_npcf_sm_plcy_ctrl_snssai_apn' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) - sum(
+                  CASE
+                           WHEN metric_name='sm_plcy_ctrl_update_resp'
+                           AND      json_value(labels, '$.group')='smf_sbi_response_cause'
+                           AND      json_value(labels, '$.cause') NOT LIKE '2%' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS npcf_smpolicycontrol_update_failure_response_code_timeout,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='update_notify_req'
+                           AND      json_value(labels,'$.group')='smf_npcf_sm_plcy_ctrl_snssai_apn' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS npcf_smpolicycontrol_update_notify_failure_rate_apn,
+                  round( safe_cast(( 1 - safe_divide( sum(
+                  CASE
+                           WHEN metric_name='update_notify_resp_succ'
+                           AND      json_value(labels,'$.group')='smf_npcf_sm_plcy_ctrl_snssai_apn' THEN ifnull(cast(metric_increase_value AS float64), 0)
+                           ELSE NULL
+                  END ), sum(
+                  CASE
+                           WHEN metric_name='update_notify_req'
+                           AND      json_value(labels,'$.group')='smf_npcf_sm_plcy_ctrl_snssai_apn' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) ))*100 AS float64 ),4) AS npcf_smpolicycontrol_update_notify_failure_rate,
+                  ---------- name check
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='pending_transaction_sent' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS pending_transaction_sent_apn,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='sm_plcy_ctrl_update_notify_resp'
+                           AND      json_value(labels,'$.group')='smf_sbi_response_cause'
+                           AND      json_value(labels,'$.cause') NOT LIKE '2%' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS npcf_smpolicycontrol_update_notify_failure_response_code_cause,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='update_notify_req'
+                           AND      json_value(labels, '$.group')='smf_npcf_sm_plcy_ctrl_snssai_apn' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) - sum(
+                  CASE
+                           WHEN metric_name='update_notify_resp_succ'
+                           AND      json_value(labels, '$.group')='smf_npcf_sm_plcy_ctrl_snssai_apn' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) - sum(
+                  CASE
+                           WHEN metric_name='sm_plcy_ctrl_update_notify_resp'
+                           AND      json_value(labels, '$.group')='smf_sbi_response_cause'
+                           AND      json_value(labels,'$.cause') NOT LIKE '2%' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS npcf_smpolicycontrol_update_notify_failure_response_code_timeouts,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='chf_cc_disc_req'
+                           AND      json_value(labels,'$.group')='smf_nnrf_disc' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS nfdiscover_nchf_failure_rate_request,
+                  round( safe_cast(( 1 - safe_divide (sum(
+                  CASE
+                           WHEN metric_name='chf_cc_disc_resp_succ'
+                           AND      json_value(labels,'$.group')='smf_nnrf_disc' THEN ifnull(cast(metric_increase_value AS float64), 0)
+                           ELSE NULL
+                  END ), sum(
+                  CASE
+                           WHEN metric_name='chf_cc_disc_req'
+                           AND      json_value(labels,'$.group')='smf_nnrf_disc' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) ) )* 100 AS float64 ),4) AS nfdiscover_nchf_failure_rate,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='nnrf_disc_chf_cc_disc_resp'
+                           AND      json_value(labels,'$.group')='smf_sbi_response_cause'
+                           AND      json_value(labels,'$.cause') NOT LIKE '2%' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS nfdiscovery_nchf_failure_response_codes_cause,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='pcf_smpc_disc_req'
+                           AND      json_value(labels, '$.group')='smf_nnrf_disc' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) - sum(
+                  CASE
+                           WHEN metric_name='pcf_smpc_disc_resp_succ'
+                           AND      json_value(labels, '$.group')='smf_nnrf_disc' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) - sum(
+                  CASE
+                           WHEN metric_name='nnrf_disc_pcf_smpc_disc_resp'
+                           AND      json_value(labels, '$.group')='smf_sbi_response_cause'
+                           AND      json_value(labels, '$.cause') NOT LIKE '2%' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS nfdiscovery_nchf_failure_response_codes_timeout,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='create_req'
+                           AND      json_value(labels,'$.group')='smf_converged_charging_snssai_apn' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS nchf_convergedcharging_create_failure_rate_apn,
+                  round( safe_cast( ( 1 - safe_divide (sum(
+                  CASE
+                           WHEN metric_name='create_resp_succ'
+                           AND      json_value(labels,'$.group')='smf_converged_charging_snssai_apn' THEN ifnull(cast(metric_increase_value AS float64), 0)
+                           ELSE NULL
+                  END ), sum(
+                  CASE
+                           WHEN metric_name='create_req'
+                           AND      json_value(labels,'$.group')='smf_converged_charging_snssai_apn' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END )) )*100 AS float64 ),4) AS nchf_convergedcharging_create_failure_rate,
+                  ------------ name check
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='converged_charging_create_resp'
+                           AND      json_value(labels,'$.group')='smf_sbi_response_cause'
+                           AND      json_value(labels,'$.cause') NOT LIKE '2%' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS nchf_convergedcharging_create_failure_response_codes_cause,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='create_req'
+                           AND      json_value(labels, '$.group')='smf_converged_charging_snssai_apn' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) - sum(
+                  CASE
+                           WHEN metric_name='create_resp_succ'
+                           AND      json_value(labels, '$.group')='smf_converged_charging_snssai_apn' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) - sum(
+                  CASE
+                           WHEN metric_name='converged_charging_create_resp'
+                           AND      json_value(labels, '$.group')='smf_sbi_response_cause'
+                           AND      json_value(labels, '$.cause') NOT LIKE '2%' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS nchf_convergedcharging_create_failure_response_codes_timeouts,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='update_req'
+                           AND      json_value(labels,'$.group')='smf_converged_charging_snssai_apn' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS nchf_convergedcharging_update_failure_rate_apn,
+                  round( safe_cast( ( 1 - safe_divide( sum(
+                  CASE
+                           WHEN metric_name='update_resp_succ'
+                           AND      json_value(labels,'$.group')='smf_converged_charging_snssai_apn' THEN ifnull(cast(metric_increase_value AS float64), 0)
+                           ELSE NULL
+                  END ), sum(
+                  CASE
+                           WHEN metric_name='update_req'
+                           AND      json_value(labels,'$.group')='smf_converged_charging_snssai_apn' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END )))*100 AS float64 ),4) AS nchf_convergedcharging_update_failure_rate,
+                  ---------- name check
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name = 'converged_charging_update_resp'
+                           AND      json_value(labels,'$.group')='smf_sbi_response_cause'
+                           AND      json_value(labels,'$.cause') NOT LIKE '2%' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS nchf_convergedcharging_update_failure_response_code_cause,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='update_req'
+                           AND      json_value(labels, '$.group')='smf_converged_charging_snssai_apn' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) - sum(
+                  CASE
+                           WHEN metric_name='update_resp_succ'
+                           AND      json_value(labels, '$.group')='smf_converged_charging_snssai_apn' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) - sum(
+                  CASE
+                           WHEN metric_name='converged_charging_update_resp'
+                           AND      json_value(labels, '$.group')='smf_sbi_response_cause'
+                           AND      json_value(labels, '$.cause') NOT LIKE '2%' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS nchf_convergedcharging_update_failure_response_code_timeouts,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='failure_action_continue_and_retain'
+                           AND      json_value(labels,'$.group')='smf_converged_charging_snssai_apn' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS failure_action_continue_and_retain,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='retained_connection_failure'
+                           AND      json_value(labels,'$.group')='smf_converged_charging_snssai_apn' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64 ),4) AS retained_connection_failure,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='retained_failure_code'
+                           AND      json_value(labels,'$.group')='smf_converged_charging_snssai_apn' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS retained_failure_code,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='registration_req'
+                           AND      json_value(labels,'$.group')='smf_nudm_uecm' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS nudm_uecm_registration_failure_rate_request,
+                  round( safe_cast( (1- safe_divide(sum(
+                  CASE
+                           WHEN metric_name='registration_resp_succ'
+                           AND      json_value(labels,'$.group')='smf_nudm_uecm' THEN ifnull(cast(metric_increase_value AS float64), 0)
+                           ELSE NULL
+                  END ), sum (
+                  CASE
+                           WHEN metric_name='registration_req'
+                           AND      json_value(labels,'$.group')='smf_nudm_uecm' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END )))* 100 AS float64),4) AS nudm_uecm_registration_failure_rate,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='uecm_registration_resp'
+                           AND      json_value(labels,'$.group')='smf_sbi_response_cause'
+                           AND      json_value(labels,'$.cause') NOT LIKE '2%' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS nudm_uecm_registration_failure_response_codes_cause,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='registration_req'
+                           AND      json_value(labels, '$.group')='smf_nudm_uecm' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) - sum(
+                  CASE
+                           WHEN metric_name='registration_resp_succ'
+                           AND      json_value(labels, '$.group')='smf_nudm_uecm' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) - sum(
+                  CASE
+                           WHEN metric_name='uecm_registration_resp'
+                           AND      json_value(labels, '$.group')='smf_sbi_response_cause'
+                           AND      json_value(labels, '$.cause') NOT LIKE '2%' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS nudm_uecm_registration_failure_response_codes_timeouts,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='session_establishment_req_sent'
+                           AND      json_value(labels,'$.group')='sxb_session_information' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS n4_session_establishment_failure_rate_request,
+                  round( safe_cast(( 1 - safe_divide( sum(
+                  CASE
+                           WHEN metric_name='session_establishment_resp_acc_rcvd'
+                           AND      json_value(labels,'$.group')='sxb_session_information' THEN ifnull(cast(metric_increase_value AS float64), 0)
+                           ELSE NULL
+                  END ), sum(
+                  CASE
+                           WHEN metric_name='session_establishment_req_sent'
+                           AND      json_value(labels,'$.group')='sxb_session_information' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) ))*100 AS float64 ),4)AS n4_session_establishment_failure_rate,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='session_modification_req_sent'
+                           AND      json_value(labels,'$.group')='sxb_session_information' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS n4_session_modification_failure_rate_request,
+                  round( safe_cast(( 1-safe_divide (sum(
+                  CASE
+                           WHEN metric_name='session_modification_resp_acc_rcvd'
+                           AND      json_value(labels,'$.group')='sxb_session_information' THEN ifnull(cast(metric_increase_value AS float64), 0)
+                           ELSE NULL
+                  END ), sum(
+                  CASE
+                           WHEN metric_name='session_modification_req_sent'
+                           AND      json_value(labels,'$.group')='sxb_session_information' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ))) * 100 AS float64),4) AS n4_session_modification_failure_rate,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='session_report_req_rcvd'
+                           AND      json_value(labels,'$.group')='sxb_session_information' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS n4_session_report_failure_rate_request,
+                  round( safe_cast( (1- safe_divide(sum(
+                  CASE
+                           WHEN metric_name='session_report_resp_acc_sent'
+                           AND      json_value(labels,'$.group')='sxb_session_information' THEN ifnull(cast(metric_increase_value AS float64), 0)
+                           ELSE NULL
+                  END ),sum(
+                  CASE
+                           WHEN metric_name='session_report_req_rcvd'
+                           AND      json_value(labels,'$.group')='sxb_session_information' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) ))* 100 AS float64),4) AS n4_session_report_failure_rate,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='session_deletion_req_sent'
+                           AND      json_value(labels,'$.group')='sxb_session_information' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS n4_session_delete_failure_rate_request,
+                  round( safe_cast( (1- safe_divide (sum(
+                  CASE
+                           WHEN metric_name='session_deletion_resp_acc_rcvd'
+                           AND      json_value(labels,'$.group')='sxb_session_information' THEN ifnull(cast(metric_increase_value AS float64), 0)
+                           ELSE NULL
+                  END ), sum(
+                  CASE
+                           WHEN metric_name='session_deletion_req_sent'
+                           AND      json_value(labels,'$.group')='sxb_session_information' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) ))* 100 AS float64),4) AS n4_session_delete_failure_rate,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='pdu_session'
+                           AND      json_value(labels,'$.group')='number_of_pdu_sessions_dnn' THEN cast(metric_sum_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS sa_sessions_dnn,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='establishment_req'
+                           AND      json_value(labels,'$.group')='smf_session_management_n1_snssai_apn' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS pdu_session_establishment_rate_apn,
+                  round( safe_cast( (1- safe_divide (sum(
+                  CASE
+                           WHEN metric_name='establishment_acc'
+                           AND      json_value(labels,'$.group')='smf_session_management_n1_snssai_apn' THEN ifnull(cast(metric_increase_value AS float64), 0)
+                           ELSE NULL
+                  END ),sum(
+                  CASE
+                           WHEN metric_name='establishment_req'
+                           AND      json_value(labels,'$.group')='smf_session_management_n1_snssai_apn' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END )))*100 AS float64),4) AS pdu_session_establishment_rate,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='establishment_rej'
+                           AND      json_value(labels,'$.group')='smf_session_management_n1_cause' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS pdu_session_establishment_reject_cause_codes,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='create_sm_context_req'
+                           AND      json_value(labels,'$.group')='smf_nsmf_pdu_session_snssai_apn' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS create_sm_context_requests_apn,
+                  round( safe_cast( (1- safe_divide( sum(
+                  CASE
+                           WHEN metric_name='create_sm_context_resp_succ'
+                           AND      json_value(labels,'$.group')='smf_nsmf_pdu_session_snssai_apn' THEN ifnull(cast(metric_increase_value AS float64), 0)
+                           ELSE NULL
+                  END ), sum(
+                  CASE
+                           WHEN metric_name='create_sm_context_req'
+                           AND      json_value(labels,'$.group')='smf_nsmf_pdu_session_snssai_apn' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END )))*100 AS float64),4) AS create_sm_context_requests_failure_rate,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='pdu_session_create_sm_context_resp'
+                           AND      json_value(labels,'$.group')='smf_sbi_response_cause'
+                           AND      json_value(labels,'$.cause') NOT LIKE '2%' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS pdu_session_create_sm_context_resp_cause,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='smf_modification_cmd'
+                           AND      json_value(labels,'$.group')='smf_session_management_n1_snssai_apn' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS smf_initiated_pdu_session_modification_apn,
+                  round( safe_cast(( 1 - safe_divide ( sum(
+                  CASE
+                           WHEN metric_name='smf_modification_cmpl'
+                           AND      json_value(labels,'$.group')='smf_session_management_n1_snssai_apn' THEN ifnull(cast(metric_increase_value AS float64), 0)
+                           ELSE NULL
+                  END ), sum(
+                  CASE
+                           WHEN metric_name='smf_modification_cmd'
+                           AND      json_value(labels,'$.group')='smf_session_management_n1_snssai_apn' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END )))*100 AS float64 ),4) AS smf_initiated_pdu_session_modification_failure_rate,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='modification_rej'
+                           AND      json_value(labels,'$.group')='smf_session_management_n1_cause' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS pdu_session_modify_reject_cause_codes,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='update_sm_context_req'
+                           AND      json_value(labels,'$.group')='smf_nsmf_pdu_session_snssai_apn'THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS update_sm_context_requests_apn,
+                  round( safe_cast(( 1- safe_divide (sum(
+                  CASE
+                           WHEN metric_name='update_sm_context_resp_succ'
+                           AND      json_value(labels,'$.group')='smf_nsmf_pdu_session_snssai_apn' THEN ifnull(cast(metric_increase_value AS float64), 0)
+                           ELSE NULL
+                  END ), sum(
+                  CASE
+                           WHEN metric_name='update_sm_context_req'
+                           AND      json_value(labels,'$.group')='smf_nsmf_pdu_session_snssai_apn' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END )))*100 AS float64),4) AS update_sm_context_requests_failure_rate,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='pdu_session_update_sm_context_resp'
+                           AND      json_value(labels,'$.group')='smf_sbi_response_cause'
+                           AND      json_value(labels,'$.cause') NOT LIKE '2%' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS update_sm_context_failure_response_codes_cause,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='retrieve_sm_context_req'
+                           AND      json_value(labels,'$.group')='smf_nsmf_pdu_session_snssai_apn'THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS retrieve_sm_context_requests_apn,
+                  round( safe_cast( (1- safe_divide (sum(
+                  CASE
+                           WHEN metric_name='retrieve_sm_context_resp_succ'
+                           AND      json_value(labels,'$.group')='smf_nsmf_pdu_session_snssai_apn' THEN ifnull(cast(metric_increase_value AS float64), 0)
+                           ELSE NULL
+                  END ), sum(
+                  CASE
+                           WHEN metric_name='retrieve_sm_context_req'
+                           AND      json_value(labels,'$.group')='smf_nsmf_pdu_session_snssai_apn' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END )))*100 AS float64),4) AS retrieve_sm_context_requests_failure_rate,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='pdu_session_retrieve_sm_context_resp'
+                           AND      json_value(labels,'$.group')='smf_sbi_response_cause'
+                           AND      json_value(labels,'$.cause') NOT LIKE '2%' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS retrieve_sm_context_failure_response_codes_cause,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='smf_release_cmd'
+                           AND      json_value(labels,'$.group')='smf_session_management_n1_snssai_apn' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS smf_initiated_pdu_session_release_apn,
+                  round( safe_cast( (1- safe_divide (sum(
+                  CASE
+                           WHEN metric_name='smf_release_cmpl'
+                           AND      json_value(labels,'$.group')='smf_session_management_n1_snssai_apn' THEN ifnull(cast(metric_increase_value AS float64), 0)
+                           ELSE NULL
+                  END ), sum(
+                  CASE
+                           WHEN metric_name='smf_release_cmd'
+                           AND      json_value(labels,'$.group')='smf_session_management_n1_snssai_apn' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END )))*100 AS float64),4) AS smf_initiated_pdu_session_release_failure_rate,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='release_rej'
+                           AND      json_value(labels,'$.group')='smf_session_management_n1_cause'THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS pdu_session_release_reject_cause_codes,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='subscribe_req'
+                           AND      json_value(labels,'$.group')='smf_nudm_sdm' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS nudm_sdm_subscribe_failure_rate_request,
+                  round( safe_cast( (1- safe_divide (sum(
+                  CASE
+                           WHEN metric_name='subscribe_resp_succ'
+                           AND      json_value(labels,'$.group')='smf_nudm_sdm' THEN ifnull(cast(metric_increase_value AS float64), 0)
+                           ELSE NULL
+                  END ), sum(
+                  CASE
+                           WHEN metric_name='subscribe_req'
+                           AND      json_value(labels,'$.group')='smf_nudm_sdm' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END )))*100 AS float64),4) AS nudm_sdm_subscribe_failure_rate,
+                  round(safe_cast( sum(
+                  CASE
+                           WHEN metric_name='sdm_subscribe_resp'
+                           AND      json_value(labels,'$.group')='smf_sbi_response_cause'
+                           AND      json_value(labels,'$.cause') NOT LIKE '2%' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS nudm_subscribe_failure_response_codes_cause,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='ebi_assignment_req'
+                           AND      json_value(labels,'$.group')='smf_namf_comm_snssai_apn' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS namf_comm_failure_rate_request,
+                  round( safe_cast( (1- safe_divide (sum(
+                  CASE
+                           WHEN metric_name='ebi_assignment_resp_succ'
+                           AND      json_value(labels,'$.group')='smf_namf_comm_snssai_apn' THEN ifnull(cast(metric_increase_value AS float64), 0)
+                           ELSE NULL
+                  END ), sum(
+                  CASE
+                           WHEN metric_name='ebi_assignment_req'
+                           AND      json_value(labels,'$.group')='smf_namf_comm_snssai_apn' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END )))* 100 AS float64),4) AS namf_comm_failure_rate,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='comm_ebi_assignment_resp'
+                           AND      json_value(labels,'$.group')='smf_sbi_response_cause'
+                           AND      json_value(labels,'$.cause') NOT LIKE '2%' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS namf_comm_failure_response_codes_cause,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='ho_from_5gs_to_eps_att'
+                           AND      json_value(labels,'$.group')='smf_mobility_management_snssai_apn' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS gs_to_eps_failure_apn,
+                  round( safe_cast(( 1 - safe_divide ( sum(
+                  CASE
+                           WHEN metric_name='ho_from_5gs_to_eps_cmpl'
+                           AND      json_value(labels,'$.group')='smf_mobility_management_snssai_apn' THEN ifnull(cast(metric_increase_value AS float64), 0)
+                           ELSE NULL
+                  END ), sum(
+                  CASE
+                           WHEN metric_name='ho_from_5gs_to_eps_att'
+                           AND      json_value(labels,'$.group')='smf_mobility_management_snssai_apn' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END )))*100 AS float64 ),4) AS gs_to_eps_failure_failure,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='idle_mobility_from_eps_to_5gs_att'
+                           AND      json_value(labels,'$.group')='smf_mobility_management_snssai_apn' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS eps_to_5gs_idle_mobility_apn,
+                  round( safe_cast(( 1 - safe_divide( sum(
+                  CASE
+                           WHEN metric_name='idle_mobility_from_eps_to_5gs_cmpl'
+                           AND      json_value(labels,'$.group')='smf_mobility_management_snssai_apn' THEN ifnull(cast(metric_increase_value AS float64), 0)
+                           ELSE NULL
+                  END ), sum(
+                  CASE
+                           WHEN metric_name='idle_mobility_from_eps_to_5gs_att'
+                           AND      json_value(labels,'$.group')='smf_mobility_management_snssai_apn' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) ))*100 AS float64 ),4) AS eps_to_5gs_idle_mobility_failure,
+                  round( safe_cast( sum(
+                  CASE
+                           WHEN metric_name='modification_cmd_rej'
+                           AND      json_value(labels,'$.group')='smf_session_management_n1_cause' THEN cast(metric_increase_value AS float64)
+                           ELSE NULL
+                  END ) AS float64),4) AS pdu_session_modification_command_reject_cause_codes
+         FROM     vz-it-pr-gudv-dtwndo-0.aid_nwperf_aether_core_tbls_v.aether_smf_performance
+         GROUP BY trans_dt,
+                  event_time,
+                  vendor,
+                  fqdn )
+SELECT   trans_dt,
+         event_time,
+         vendor,
+         fqdn,
+         metric.metric_name                                                 AS metric_name,
+         sum(metric.metric_value)                                           AS value,
+         json_extract_scalar(metric.group_by_label, '$.group_by_key_name')  AS group_key,
+         json_extract_scalar(metric.group_by_label, '$.group_by_key_value') AS group_value,
+FROM     agg,
+UNNEST([ 
+STRUCT('active_sessions' AS metric_name, agg.active_sessions AS metric_value, TO_JSON_STRING(STRUCT('apn' AS group_by_key_name, JSON_VALUE(labels,'$.apn') AS group_by_key_value)) AS group_by_label), 
+STRUCT('qci_session_count' AS metric_name, agg.qci_session_count AS metric_value, TO_JSON_STRING(STRUCT('qci_stats' AS group_by_key_name, JSON_VALUE(labels,'$.qci_stats') AS group_by_key_value)) AS group_by_label), 
+-- STRUCT('qci_session_count_snapshot' AS metric_name, agg.qci_session_count_snapshot AS metric_value, (STRUCT('qci_stats' AS group_by_key_name, --JSON_VALUE(labels,'$.qci_stats') AS group_by_key_value)) AS group_by_label), 
+STRUCT('rat_session_count_lte' AS metric_name, agg.rat_session_count_lte AS metric_value, NULL AS group_by_label), 
+STRUCT('rat_session_count_wlan' AS metric_name, agg.rat_session_count_wlan AS metric_value, NULL AS group_by_label), 
+STRUCT('rat_session_count_nr' AS metric_name, agg.rat_session_count_nr AS metric_value, NULL AS group_by_label), 
+STRUCT('nfheartbeat_failure_rate_request' AS metric_name, agg.nfheartbeat_failure_rate_request AS metric_value, NULL AS group_by_label), 
+STRUCT('nfheartbeat_failure_rate' AS metric_name, agg.nfheartbeat_failure_rate AS metric_value, NULL AS group_by_label), 
+STRUCT('nfheartbeat_failure_response_codes_cause' AS metric_name, agg.nfheartbeat_failure_response_codes_cause AS metric_value,
+TO_JSON_STRING(STRUCT('cause' AS group_by_key_name, JSON_VALUE(labels,'$.cause') AS group_by_key_value)) AS group_by_label), 
+STRUCT('create_session_failure_rate_create_bearer_failure_rate' AS metric_name, agg.create_session_failure_rate_create_bearer_failure_rate AS metric_value, NULL AS group_by_label), 
+STRUCT('create_session_failure_rate_requests' AS metric_name, agg.create_session_failure_rate_requests AS metric_value, NULL AS group_by_label), 
+STRUCT('create_session_failure_response_cause_code_stats' AS metric_name, agg.create_session_failure_response_cause_code_stats AS metric_value,
+TO_JSON_STRING(STRUCT('cause_code_stats' AS group_by_key_name, JSON_VALUE(labels,'$.cause_code_stats') AS group_by_key_value)) AS group_by_label), 
+STRUCT('create_session_failure_response_codes_timeout1' AS metric_name, agg.create_session_failure_response_codes_timeout1 AS metric_value,  NULL AS group_by_label), 
+STRUCT('create_session_failure_response_codes_timeout' AS metric_name, agg.create_session_failure_response_codes_timeout AS metric_value,  NULL AS group_by_label), 
+STRUCT('create_bearer_failure_rate_Request' AS metric_name, agg.create_bearer_failure_rate_Request AS metric_value,  NULL AS group_by_label), 
+STRUCT('create_bearer_failure_rate' AS metric_name, agg.create_bearer_failure_rate AS metric_value, NULL AS group_by_label), 
+STRUCT('create_bearer_failure_rate_create_session_failure_rate' AS metric_name, agg.create_bearer_failure_rate_create_session_failure_rate AS metric_value, NULL AS group_by_label), 
+STRUCT('create_bearer_failure_response_codes_timesout' AS metric_name, agg.create_bearer_failure_response_codes_timesout AS metric_value, NULL AS group_by_label), 
+STRUCT('create_bearer_failre_response_timeout1' AS metric_name, agg.create_bearer_failre_response_timeout1 AS metric_value,  NULL AS group_by_label), 
+STRUCT('create_bearer_failure_response_cause_code_stats' AS metric_name, agg.create_bearer_failure_response_cause_code_stats AS metric_value, 
+TO_JSON_STRING(STRUCT('cause_code_stats' AS group_by_key_name, JSON_VALUE(labels,'$.cause_code_stats') AS group_by_key_value)) AS group_by_label), 
+STRUCT('nfdiscover_udm_sdm_failure_rate_request' AS metric_name,agg.nfdiscover_udm_sdm_failure_rate_request AS metric_value,
+NULL AS group_by_label), 
+STRUCT('nfdiscover_udm_sdm_failure_rate' AS metric_name,agg.nfdiscover_udm_sdm_failure_rate AS metric_value,
+NULL AS group_by_label),
+STRUCT('nrfdiscovery_udm_failure_response_codes_cause' AS metric_name,agg.nrfdiscovery_udm_failure_response_codes_cause AS metric_value,
+NULL AS group_by_label), 
+STRUCT('nrfdiscovery_udm_failure_response_codes_timeouts' AS metric_name,agg.nrfdiscovery_udm_failure_response_codes_timeouts AS metric_value,
+NULL AS group_by_label),
+STRUCT('nudm_sdm_get_failure_rate_request' AS metric_name,agg.nudm_sdm_get_failure_rate_request AS metric_value,
+NULL AS group_by_label),
+STRUCT('nudm_sdm_get_failure_rate' AS metric_name,agg.nudm_sdm_get_failure_rate AS metric_value,
+NULL AS group_by_label), 
+STRUCT('nudm_sdm_get_failure_response_codes_cause' AS metric_name,agg.nudm_sdm_get_failure_response_codes_cause AS metric_value,
+TO_JSON_STRING(STRUCT('cause' AS group_by_key_name,JSON_VALUE(labels,'$.cause') AS group_by_key_value)) AS group_by_label),
+STRUCT('nudm_sdm_get_failure_response_codes_timeouts' AS metric_name,agg.nudm_sdm_get_failure_response_codes_timeouts AS metric_value,
+NULL AS group_by_label), 
+STRUCT('nfdiscover_sm_pcf_failure_rate_request' AS metric_name,agg.nfdiscover_sm_pcf_failure_rate_request AS metric_value,
+NULL AS group_by_label),
+STRUCT('nfdiscover_sm_pcf_failure_rate' AS metric_name,agg.nfdiscover_sm_pcf_failure_rate AS metric_value,
+NULL AS group_by_label), 
+STRUCT('nfdiscover_sm_pcf_failure_rate_cause' AS metric_name,agg.nfdiscover_sm_pcf_failure_rate_cause AS metric_value,
+TO_JSON_STRING(STRUCT('cause' AS group_by_key_name,JSON_VALUE(labels,'$.cause') AS group_by_key_value)) AS group_by_label), 
+STRUCT('nfdiscover_sm_pcf_failure_rate_timeouts' AS metric_name,agg.nfdiscover_sm_pcf_failure_rate_timeouts AS metric_value,
+NULL AS group_by_label), 
+STRUCT('npcf_smpolicycontrol_create_failure_rate_apn' AS metric_name,agg.npcf_smpolicycontrol_create_failure_rate_apn AS metric_value,
+TO_JSON_STRING(STRUCT('apn' AS group_by_key_name,JSON_VALUE(labels,'$.apn') AS group_by_key_value)) AS group_by_label), STRUCT('npcf_smpolicycontrol_create_failure_rate' AS metric_name,agg.npcf_smpolicycontrol_create_failure_rate AS metric_value,
+NULL AS group_by_label),
+STRUCT('npcf_smpolicycontrol_create_failure_response_codes_cause' AS metric_name,agg.npcf_smpolicycontrol_create_failure_response_codes_cause AS metric_value,TO_JSON_STRING(STRUCT('cause' AS group_by_key_name,JSON_VALUE(labels,'$.cause') AS group_by_key_value)) AS group_by_label), STRUCT('npcf_smpolicycontrol_create_failure_response_codes_timeouts' AS metric_name,agg.npcf_smpolicycontrol_create_failure_response_codes_timeouts AS metric_value,NULL AS group_by_label), 
+STRUCT('npcf_smpolicycontrol_update_failure_rate_apn' AS metric_name,agg.npcf_smpolicycontrol_update_failure_rate_apn AS metric_value,
+TO_JSON_STRING(STRUCT('apn' AS group_by_key_name,JSON_VALUE(labels,'$.apn') AS group_by_key_value)) AS group_by_label), STRUCT('npcf_smpolicycontrol_update_failure_rate' AS metric_name,agg.npcf_smpolicycontrol_update_failure_rate AS metric_value,
+NULL AS group_by_label), 
+STRUCT('npcf_smpolicycontrol_update_failure_response_code_cause' AS metric_name,agg.npcf_smpolicycontrol_update_failure_response_code_cause AS metric_value,TO_JSON_STRING(STRUCT('cause' AS group_by_key_name,JSON_VALUE(labels,'$.cause') AS group_by_key_value)) AS group_by_label), 
+STRUCT('npcf_smpolicycontrol_update_failure_response_code_timeout' AS metric_name,agg.npcf_smpolicycontrol_update_failure_response_code_timeout AS metric_value,NULL AS group_by_label), 
+STRUCT('npcf_smpolicycontrol_update_notify_failure_rate_apn' AS metric_name,agg.npcf_smpolicycontrol_update_notify_failure_rate_apn AS metric_value,TO_JSON_STRING(STRUCT('apn' AS group_by_key_name,JSON_VALUE(labels,'$.apn') AS group_by_key_value)) AS group_by_label),
+STRUCT('npcf_smpolicycontrol_update_notify_failure_rate' AS metric_name,agg.npcf_smpolicycontrol_update_notify_failure_rate AS metric_value,
+NULL AS group_by_label), 
+STRUCT('pending_transaction_sent_apn' AS metric_name,agg.pending_transaction_sent_apn AS metric_value,TO_JSON_STRING(STRUCT('apn' AS group_by_key_name,JSON_VALUE(labels,'$.apn') AS group_by_key_value)) AS group_by_label), STRUCT('npcf_smpolicycontrol_update_notify_failure_response_code_cause' AS metric_name,agg.npcf_smpolicycontrol_update_notify_failure_response_code_cause AS metric_value,TO_JSON_STRING(STRUCT('cause' AS group_by_key_name,
+JSON_VALUE(labels,'$.cause') AS group_by_key_value)) AS group_by_label), 
+STRUCT('npcf_smpolicycontrol_update_notify_failure_response_code_timeouts' AS metric_name,agg.npcf_smpolicycontrol_update_notify_failure_response_code_timeouts AS metric_value,NULL AS group_by_label), STRUCT('nfdiscover_nchf_failure_rate_request' AS metric_name,agg.nfdiscover_nchf_failure_rate_request AS metric_value,NULL AS group_by_label), STRUCT('nfdiscover_nchf_failure_rate' AS metric_name,agg.nfdiscover_nchf_failure_rate AS metric_value,NULL AS group_by_label),
+STRUCT('nfdiscovery_nchf_failure_response_codes_cause' AS metric_name,agg.nfdiscovery_nchf_failure_response_codes_cause AS metric_value,
+TO_JSON_STRING(STRUCT('cause' AS group_by_key_name,JSON_VALUE(labels,'$.cause') AS group_by_key_value)) AS group_by_label), STRUCT('nfdiscovery_nchf_failure_response_codes_timeout' AS metric_name,agg.nfdiscovery_nchf_failure_response_codes_timeout AS metric_value,
+NULL AS group_by_label),
+STRUCT('nchf_convergedcharging_create_failure_rate_apn' AS metric_name,agg.nchf_convergedcharging_create_failure_rate_apn AS metric_value,TO_JSON_STRING(STRUCT('apn' AS group_by_key_name,JSON_VALUE(labels,'$.apn') AS group_by_key_value)) AS group_by_label), STRUCT('nchf_convergedcharging_create_failure_rate' AS metric_name,agg.nchf_convergedcharging_create_failure_rate AS metric_value,
+NULL AS group_by_label),
+STRUCT('nchf_convergedcharging_create_failure_response_codes_cause' AS metric_name,agg.nchf_convergedcharging_create_failure_response_codes_cause AS metric_value,
+TO_JSON_STRING(STRUCT('cause' AS group_by_key_name,JSON_VALUE(labels,'$.cause') AS group_by_key_value))AS group_by_label), STRUCT('nchf_convergedcharging_create_failure_response_codes_timeouts' AS metric_name,agg.nchf_convergedcharging_create_failure_response_codes_timeouts AS metric_value,
+NULL AS group_by_label), 
+STRUCT('nchf_convergedcharging_update_failure_rate_apn' AS metric_name,agg.nchf_convergedcharging_update_failure_rate_apn AS metric_value,
+TO_JSON_STRING(STRUCT('apn' AS group_by_key_name,JSON_VALUE(labels,'$.apn') AS group_by_key_value)) AS group_by_label), 
+STRUCT('nchf_convergedcharging_update_failure_rate' AS metric_name,agg.nchf_convergedcharging_update_failure_rate AS metric_value,
+NULL AS group_by_label), 
+STRUCT('nchf_convergedcharging_update_failure_response_code_cause' AS metric_name,agg.nchf_convergedcharging_update_failure_response_code_cause AS metric_value,
+TO_JSON_STRING(STRUCT('cause' AS group_by_key_name,JSON_VALUE(labels,'$.cause') AS group_by_key_value)) AS group_by_label), STRUCT('nchf_convergedcharging_update_failure_response_code_timeouts' AS metric_name,agg.nchf_convergedcharging_update_failure_response_code_timeouts AS metric_value,
+NULL AS group_by_label), 
+STRUCT('failure_action_continue_and_retain' AS metric_name,agg.failure_action_continue_and_retain AS metric_value,NULL AS group_by_label), STRUCT('retained_connection_failure' AS metric_name,agg.retained_connection_failure AS metric_value,NULL AS group_by_label), 
+STRUCT('retained_failure_code' AS metric_name,agg.retained_failure_code AS metric_value,NULL AS group_by_label), STRUCT('nudm_uecm_registration_failure_rate_request' AS metric_name,
+agg.nudm_uecm_registration_failure_rate_request AS metric_value,NULL AS group_by_label),
+STRUCT('nudm_uecm_registration_failure_rate' AS metric_name,agg.nudm_uecm_registration_failure_rate AS metric_value,NULL AS group_by_label), STRUCT('nudm_uecm_registration_failure_response_codes_cause' AS metric_name,agg.nudm_uecm_registration_failure_response_codes_cause AS metric_value,TO_JSON_STRING(STRUCT('cause' AS group_by_key_name,JSON_VALUE(labels,'$.cause') AS group_by_key_value)) AS group_by_label), STRUCT('nudm_uecm_registration_failure_response_codes_timeouts' AS metric_name,
+agg.nudm_uecm_registration_failure_response_codes_timeouts AS metric_value,NULL AS group_by_label),
+STRUCT('n4_session_establishment_failure_rate_request' AS metric_name,agg.n4_session_establishment_failure_rate_request AS metric_value,NULL AS group_by_label), 
+STRUCT('n4_session_establishment_failure_rate' AS metric_name,agg.n4_session_establishment_failure_rate AS metric_value,NULL AS group_by_label), STRUCT('n4_session_modification_failure_rate_request' AS metric_name,agg.n4_session_modification_failure_rate_request AS metric_value,NULL AS group_by_label), STRUCT('n4_session_modification_failure_rate' AS metric_name,agg.n4_session_modification_failure_rate AS metric_value,
+NULL AS group_by_label), 
+STRUCT('n4_session_report_failure_rate_request' AS metric_name,agg.n4_session_report_failure_rate_request AS metric_value,NULL AS group_by_label), 
+STRUCT('n4_session_report_failure_rate' AS metric_name,agg.n4_session_report_failure_rate AS metric_value,NULL AS group_by_label),
+STRUCT('n4_session_delete_failure_rate_request' AS metric_name,agg.n4_session_delete_failure_rate_request AS metric_value,NULL AS group_by_label),
+STRUCT('n4_session_delete_failure_rate' AS metric_name,agg.n4_session_delete_failure_rate AS metric_value,NULL AS group_by_label),
+STRUCT('sa_sessions_dnn' AS metric_name,agg.sa_sessions_dnn AS metric_value,TO_JSON_STRING(STRUCT('dnn' AS group_by_key_name,JSON_VALUE(labels,'$.dnn') AS group_by_key_value)) AS group_by_label), 
+STRUCT('pdu_session_establishment_rate_apn' AS metric_name,agg.pdu_session_establishment_rate_apn AS metric_value,TO_JSON_STRING(STRUCT('apn' AS group_by_key_name,
+JSON_VALUE(labels,'$.apn') AS group_by_key_value)) AS group_by_label), 
+STRUCT('pdu_session_establishment_rate' AS metric_name,agg.pdu_session_establishment_rate AS metric_value,NULL AS group_by_label), STRUCT('pdu_session_establishment_reject_cause_codes' AS metric_name,agg.pdu_session_establishment_reject_cause_codes,TO_JSON_STRING(STRUCT('cause' AS group_by_key_name,
+JSON_VALUE(labels,'$.cause') AS group_by_key_value)) AS group_by_label), 
+STRUCT('create_sm_context_requests_apn' AS metric_name,agg.create_sm_context_requests_apn AS metric_value,TO_JSON_STRING(STRUCT('apn' AS group_by_key_name,
+JSON_VALUE(labels,'$.apn') AS group_by_key_value)) AS group_by_label), 
+STRUCT('create_sm_context_requests_failure_rate' AS metric_name,agg.create_sm_context_requests_failure_rate AS metric_value,NULL AS group_by_label), STRUCT('pdu_session_create_sm_context_resp_cause' AS metric_name,agg.pdu_session_create_sm_context_resp_cause AS metric_value,TO_JSON_STRING(STRUCT('cause' AS group_by_key_name,
+JSON_VALUE(labels,'$.cause') AS group_by_key_value)) AS group_by_label), 
+STRUCT('smf_initiated_pdu_session_modification_apn' AS metric_name,agg.smf_initiated_pdu_session_modification_apn AS metric_value,
+NULL AS group_by_label), 
+STRUCT('smf_initiated_pdu_session_modification_failure_rate' AS metric_name,agg.smf_initiated_pdu_session_modification_failure_rate AS metric_value,TO_JSON_STRING(STRUCT('cause' AS group_by_key_name,
+JSON_VALUE(labels,'$.cause') AS group_by_key_value)) AS group_by_label), 
+STRUCT('pdu_session_modify_reject_cause_codes' AS metric_name,agg.pdu_session_modify_reject_cause_codes AS metric_value,
+NULL AS group_by_label),
+STRUCT('update_sm_context_requests_apn' AS metric_name,agg.update_sm_context_requests_apn AS metric_value,TO_JSON_STRING(STRUCT('apn' AS group_by_key_name,
+JSON_VALUE(labels,'$.apn') AS group_by_key_value)) AS group_by_label), 
+STRUCT('update_sm_context_requests_failure_rate' AS metric_name,agg.update_sm_context_requests_failure_rate AS metric_value,NULL AS group_by_label), 
+STRUCT('update_sm_context_failure_response_codes_cause' AS metric_name,agg.update_sm_context_failure_response_codes_cause AS metric_value,TO_JSON_STRING(STRUCT('cause' AS group_by_key_name,JSON_VALUE(labels,'$.cause') AS group_by_key_value)) AS group_by_label), 
+STRUCT('retrieve_sm_context_requests_apn' AS metric_name,agg.retrieve_sm_context_requests_apn AS metric_value,TO_JSON_STRING(STRUCT('apn' AS group_by_key_name,
+JSON_VALUE(labels,'$.apn') AS group_by_key_value)) AS group_by_label), 
+STRUCT('retrieve_sm_context_requests_failure_rate' AS metric_name,agg.retrieve_sm_context_requests_failure_rate AS metric_value,NULL AS group_by_label), 
+STRUCT('retrieve_sm_context_failure_response_codes_cause' AS metric_name,agg.retrieve_sm_context_failure_response_codes_cause AS metric_value,TO_JSON_STRING(STRUCT('cause' AS group_by_key_name,JSON_VALUE(labels,'$.cause') AS group_by_key_value)) AS group_by_label), 
+STRUCT('smf_initiated_pdu_session_release_apn' AS metric_name,agg.smf_initiated_pdu_session_release_apn AS metric_value,NULL AS group_by_label),
+STRUCT('smf_initiated_pdu_session_release_failure_rate' AS metric_name,agg.smf_initiated_pdu_session_release_failure_rate AS metric_value,TO_JSON_STRING(STRUCT('apn' AS group_by_key_name,
+JSON_VALUE(labels,'$.apn') AS group_by_key_value)) AS group_by_label), 
+STRUCT('pdu_session_release_reject_cause_codes' AS metric_name,agg.pdu_session_release_reject_cause_codes AS metric_value,TO_JSON_STRING(STRUCT('cause' AS group_by_key_name,
+JSON_VALUE(labels,'$.cause') AS group_by_key_value)) AS group_by_label), 
+STRUCT('nudm_sdm_subscribe_failure_rate_request' AS metric_name,agg.nudm_sdm_subscribe_failure_rate_request AS metric_value,NULL AS group_by_label), 
+STRUCT('nudm_sdm_subscribe_failure_rate' AS metric_name,agg.nudm_sdm_subscribe_failure_rate AS metric_value,NULL AS group_by_label), 
+STRUCT('nudm_subscribe_failure_response_codes_cause' AS metric_name,agg.nudm_subscribe_failure_response_codes_cause AS metric_value,TO_JSON_STRING(STRUCT('cause' AS group_by_key_name,
+JSON_VALUE(labels,'$.cause') AS group_by_key_value)) AS group_by_label),
+STRUCT('namf_comm_failure_rate_request' AS metric_name,agg.namf_comm_failure_rate_request AS metric_value,NULL AS group_by_label), 
+STRUCT('namf_comm_failure_rate' AS metric_name,agg.namf_comm_failure_rate AS metric_value,NULL AS group_by_label), 
+STRUCT('namf_comm_failure_response_codes_cause' AS metric_name,agg.namf_comm_failure_response_codes_cause AS metric_value,TO_JSON_STRING(STRUCT('cause' AS group_by_key_name,
+JSON_VALUE(labels,'$.cause') AS group_by_key_value))AS group_by_label),
+STRUCT('gs_to_eps_failure_apn' AS metric_name,agg.gs_to_eps_failure_apn AS metric_value,TO_JSON_STRING(STRUCT('apn' AS group_by_key_name,JSON_VALUE(labels,'$.apn') AS group_by_key_value)) AS group_by_label),
+STRUCT('gs_to_eps_failure_failure' AS metric_name,agg.gs_to_eps_failure_failure AS metric_value,NULL AS group_by_label), 
+STRUCT('eps_to_5gs_idle_mobility_apn' AS metric_name,agg.eps_to_5gs_idle_mobility_apn AS metric_value,TO_JSON_STRING(STRUCT('apn' AS group_by_key_name,
+JSON_VALUE(labels,'$.apn') AS group_by_key_value)) AS group_by_label), 
+STRUCT('eps_to_5gs_idle_mobility_failure' AS metric_name,agg.eps_to_5gs_idle_mobility_failure AS metric_value,NULL AS group_by_label), 
+STRUCT('pdu_session_modification_command_reject_cause_codes' AS metric_name,agg.pdu_session_modification_command_reject_cause_codes AS metric_value,TO_JSON_STRING(STRUCT('cause' AS group_by_key_name,JSON_VALUE(labels,'$.cause') AS group_by_key_value)) AS group_by_label) ]) AS metric
+GROUP BY
+trans_dt,
+event_time, 
+vendor, 
+fqdn, 
+metric_name,
+group_key, 
+group_value
