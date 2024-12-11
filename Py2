@@ -1,0 +1,81 @@
+import re
+
+def extract_unnest_blocks(sql_query):
+    """
+    Extract UNNEST blocks from the query and classify them as null or not null based on group_by_label.
+    """
+    unnest_pattern = r"UNNEST\s*\(\[\s*STRUCT\((.*?)\]\)\s*AS\s*metric"
+    unnest_blocks = re.findall(unnest_pattern, sql_query, re.DOTALL)
+    null_blocks = []
+    not_null_blocks = []
+    
+    for block in unnest_blocks:
+        if "NULL AS group_by_label" in block:
+            null_blocks.append(block.strip())
+        else:
+            not_null_blocks.append(block.strip())
+    
+    return null_blocks, not_null_blocks
+
+def find_metric_expressions(sql_query):
+    """
+    Find metric expressions in the aggregation CTE.
+    """
+    agg_cte_pattern = r"WITH\s+.*?AS\s*\(\s*SELECT(.*?)GROUP BY"
+    agg_cte = re.search(agg_cte_pattern, sql_query, re.DOTALL)
+    if not agg_cte:
+        return {}
+
+    metric_pattern = r"CASE\s+WHEN\s+metric_name='(.*?)'.*?THEN\s+(.*?)\s+END"
+    metrics = re.findall(metric_pattern, agg_cte.group(1), re.DOTALL)
+    metric_expressions = {metric_name.strip(): expression.strip() for metric_name, expression in metrics}
+    
+    return metric_expressions
+
+def generate_ctes(null_blocks, not_null_blocks, metric_expressions):
+    """
+    Generate the null and not null CTEs by combining UNNEST blocks with metric expressions.
+    """
+    null_cte = []
+    not_null_cte = []
+
+    for block in null_blocks:
+        match = re.search(r"'(.*?)' AS metric_name", block)
+        if match:
+            metric_name = match.group(1)
+            expression = metric_expressions.get(metric_name, "EXPRESSION NOT FOUND")
+            null_cte.append(f"STRUCT('{metric_name}' AS metric_name, {expression} AS metric_value, NULL AS group_by_label)")
+
+    for block in not_null_blocks:
+        match = re.search(r"'(.*?)' AS metric_name", block)
+        if match:
+            metric_name = match.group(1)
+            expression = metric_expressions.get(metric_name, "EXPRESSION NOT FOUND")
+            not_null_cte.append(f"STRUCT('{metric_name}' AS metric_name, {expression} AS metric_value, TO_JSON_STRING(...) AS group_by_label)")
+
+    return null_cte, not_null_cte
+
+def main():
+    # Input SQL query
+    sql_query = """[PASTE YOUR SQL QUERY HERE]"""
+
+    # Step 1: Extract UNNEST blocks
+    null_blocks, not_null_blocks = extract_unnest_blocks(sql_query)
+
+    # Step 2: Find metric expressions in the aggregation CTE
+    metric_expressions = find_metric_expressions(sql_query)
+
+    # Step 3: Generate null and not null CTEs
+    null_cte, not_null_cte = generate_ctes(null_blocks, not_null_blocks, metric_expressions)
+
+    # Output the CTEs
+    print("Null Group CTE:")
+    for line in null_cte:
+        print(line)
+
+    print("\nNot Null Group CTE:")
+    for line in not_null_cte:
+        print(line)
+
+if __name__ == "__main__":
+    main()
