@@ -1,0 +1,87 @@
+import re
+
+
+def extract_unnest_structs(sql_query):
+    """
+    Extract UNNEST blocks and classify them into null and not null groups based on group_by_label.
+    """
+    unnest_pattern = r"UNNEST\s*\(\[\s*STRUCT\((.*?)\]\)\s*AS\s*metric"
+    unnest_blocks = re.findall(unnest_pattern, sql_query, re.DOTALL)
+    null_unnest = []
+    not_null_unnest = []
+
+    for block in unnest_blocks:
+        if "NULL AS group_by_label" in block:
+            null_unnest.append(block.strip())
+        else:
+            not_null_unnest.append(block.strip())
+
+    return null_unnest, not_null_unnest
+
+
+def extract_metric_expressions(sql_query):
+    """
+    Extract metric expressions from the aggregation CTE.
+    """
+    metric_pattern = r"CASE\s+WHEN\s+metric_name='(.*?)'.*?THEN\s+(.*?)\s+END"
+    metric_expressions = re.findall(metric_pattern, sql_query, re.DOTALL)
+    return {metric_name.strip(): expression.strip() for metric_name, expression in metric_expressions}
+
+
+def generate_ctes(null_unnest, not_null_unnest, metric_expressions):
+    """
+    Generate CTEs for null and not null expressions and unnest blocks.
+    """
+    null_expressions_cte = []
+    not_null_expressions_cte = []
+
+    for block in null_unnest:
+        match = re.search(r"'(.*?)' AS metric_name", block)
+        if match:
+            metric_name = match.group(1)
+            expression = metric_expressions.get(metric_name, "EXPRESSION NOT FOUND")
+            null_expressions_cte.append(f"'{metric_name}' AS metric_name, {expression} AS metric_value, NULL AS group_by_label")
+
+    for block in not_null_unnest:
+        match = re.search(r"'(.*?)' AS metric_name", block)
+        if match:
+            metric_name = match.group(1)
+            expression = metric_expressions.get(metric_name, "EXPRESSION NOT FOUND")
+            not_null_expressions_cte.append(f"'{metric_name}' AS metric_name, {expression} AS metric_value, TO_JSON_STRING(...) AS group_by_label")
+
+    return null_expressions_cte, not_null_expressions_cte
+
+
+def main():
+    # Input SQL query
+    sql_query = """[PASTE YOUR SQL QUERY HERE]"""
+
+    # Step 1: Extract UNNEST blocks
+    null_unnest, not_null_unnest = extract_unnest_structs(sql_query)
+
+    # Step 2: Extract metric expressions
+    metric_expressions = extract_metric_expressions(sql_query)
+
+    # Step 3: Generate null and not null CTEs
+    null_expressions_cte, not_null_expressions_cte = generate_ctes(null_unnest, not_null_unnest, metric_expressions)
+
+    # Output CTEs
+    print("Null Expressions CTE:")
+    for line in null_expressions_cte:
+        print(line)
+
+    print("\nNot Null Expressions CTE:")
+    for line in not_null_expressions_cte:
+        print(line)
+
+    print("\nNull Unnest CTE:")
+    for block in null_unnest:
+        print(f"UNNEST ([STRUCT({block})]) AS metric")
+
+    print("\nNot Null Unnest CTE:")
+    for block in not_null_unnest:
+        print(f"UNNEST ([STRUCT({block})]) AS metric")
+
+
+if __name__ == "__main__":
+    main()
