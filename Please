@@ -1,0 +1,60 @@
+import re
+import pandas as pd
+
+def extract_kpis(query):
+    """
+    Extract CASE expressions and STRUCT definitions from the SQL query.
+    Classify them into Null KPIs and Not Null KPIs.
+    """
+    # Extract CASE expressions from the aggregation CTE
+    case_pattern = r"(CASE\s+WHEN.*?END\s+AS\s+\w+)"
+    case_expressions = re.findall(case_pattern, query, re.DOTALL)
+
+    # Extract STRUCT definitions
+    struct_pattern = r"STRUCT\((.*?)\)"
+    struct_entries = re.findall(struct_pattern, query, re.DOTALL)
+
+    # Initialize lists for null and not null KPIs
+    null_kpis = []
+    not_null_kpis = []
+
+    # Iterate over structs and classify based on group_by_label
+    for case_expr, struct in zip(case_expressions, struct_entries):
+        if "NULL AS group_by_label" in struct:
+            null_kpis.append((case_expr.strip(), struct.strip()))
+        else:
+            not_null_kpis.append((case_expr.strip(), struct.strip()))
+
+    return null_kpis, not_null_kpis
+
+
+def write_to_excel(null_kpis, not_null_kpis):
+    """
+    Write Null KPIs and Not Null KPIs to separate Excel files.
+    """
+    # Create DataFrames
+    null_df = pd.DataFrame(null_kpis, columns=["Expression", "Struct"])
+    not_null_df = pd.DataFrame(not_null_kpis, columns=["Expression", "Struct"])
+
+    # Write to Excel
+    null_df.to_excel("null_kpis.xlsx", index=False)
+    not_null_df.to_excel("not_null_kpis.xlsx", index=False)
+
+    print("Excel files generated successfully:")
+    print("- null_kpis.xlsx")
+    print("- not_null_kpis.xlsx")
+
+
+def main():
+    # Input SQL query (paste your query here)
+    query = """[PASTE YOUR SQL QUERY HERE]"""
+
+    # Extract KPIs
+    null_kpis, not_null_kpis = extract_kpis(query)
+
+    # Write to Excel
+    write_to_excel(null_kpis, not_null_kpis)
+
+
+if __name__ == "__main__":
+    main()
